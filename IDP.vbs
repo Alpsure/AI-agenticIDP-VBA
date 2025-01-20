@@ -215,13 +215,34 @@ Function CategorizeText(text As String) As String
     Dim apiResponse As String
     Dim apiKey As String
     Dim category As String
+    Dim categoryOptions  As String
+    Dim fileContent As String
+    Dim fileNumber As Integer
     
     ' Get the API key from the "Secrets" sheet, cell B2
     apiKey = ThisWorkbook.Sheets("Secrets").Range("B2").Value
     
+    ' Path to the JSON schema file
+    jsonFilePath = ThisWorkbook.Path & "\extraction_schema.json"
+    
+    ' Read the JSON file into a string
+    fileNumber = FreeFile
+    On Error Resume Next
+    Open jsonFilePath For Input As #fileNumber
+    fileContent = Input$(LOF(fileNumber), fileNumber)
+    Close #fileNumber
+    On Error GoTo 0
+    
+    If fileContent = "" Then
+        CategorizeText = "" ' Return an empty JSON object if no schema is found
+        Exit Function
+    End If
+    
+    categoryOptions = GetTopLevelKeys(fileContent)
+    
     ' Define the role and prompt
     roleDescription = "You are a categorization assistant. Based on the input text, identify the most likely category from the predefined list."
-    sprompt = "Here is the document text:\n" & text & vbNewLine & "Categories: Invoice, Receipt, Report, Letter, Unknown. Return only the category name."
+    sprompt = "Here is the document text:\n" & text & vbNewLine & "Categories: " & categoryOptions & " or Unknown. Return only the category name."
     
     ' Call the GPT API
     apiResponse = CallAPI(sprompt, roleDescription, apiKey)
@@ -433,5 +454,49 @@ Function GetBaseFileName(fileName As String) As String
         GetBaseFileName = fileName ' No extension found
     End If
 End Function
-
-
+Function GetTopLevelKeys(jsonString As String) As String
+    Dim keys As String
+    Dim currentChar As String
+    Dim insideQuotes As Boolean
+    Dim depth As Long
+    Dim i As Long
+    Dim keyStart As Long
+    Dim keyEnd As Long
+    
+    ' Initialize variables
+    keys = ""
+    insideQuotes = False
+    depth = 0
+    
+    ' Loop through the JSON string
+    For i = 1 To Len(jsonString)
+        currentChar = Mid(jsonString, i, 1)
+        
+        ' Toggle the insideQuotes flag when encountering double quotes
+        If currentChar = """" Then
+            insideQuotes = Not insideQuotes
+            If insideQuotes Then
+                ' Start of a key (only if at top level)
+                If depth = 1 Then keyStart = i + 1
+            Else
+                ' End of a key
+                If keyStart > 0 And depth = 1 Then
+                    keyEnd = i - 1
+                    If keys <> "" Then keys = keys & ", "
+                    keys = keys & Mid(jsonString, keyStart, keyEnd - keyStart + 1)
+                    keyStart = 0
+                End If
+            End If
+        ElseIf Not insideQuotes Then
+            ' Track nesting depth
+            If currentChar = "{" Then
+                depth = depth + 1
+            ElseIf currentChar = "}" Then
+                depth = depth - 1
+            End If
+        End If
+    Next i
+    
+    ' Return the extracted keys
+    GetTopLevelKeys = keys
+End Function
